@@ -38,6 +38,8 @@ void print_port_info(OMX_PARAM_PORTDEFINITIONTYPE *portdef) {
     printf("  Buffer count %d\n", portdef->nBufferCountActual);
     printf("  Buffer minimum count %d\n", portdef->nBufferCountMin);
     printf("  Buffer size %d bytes\n", portdef->nBufferSize);
+    printf("  Enabled %d\n", portdef->bEnabled);
+    printf("  Populated %d\n", portdef->bPopulated);
 }
 
 OMX_CALLBACKTYPE callbacks  = { .EventHandler = NULL,
