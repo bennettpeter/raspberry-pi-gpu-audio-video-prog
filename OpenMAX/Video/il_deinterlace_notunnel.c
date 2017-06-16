@@ -326,6 +326,7 @@ static void setup_deinterlace(COMPONENT_T *component)
 
     image_filter.eImageFilter = OMX_ImageFilterDeInterlaceAdvanced;
     // image_filter.eImageFilter = OMX_ImageFilterDeInterlaceFast;
+    // image_filter.eImageFilter = OMX_ImageFilterDeInterlaceLineDouble;
     if (err == OMX_ErrorNone)
         err = OMX_SetConfig(ilclient_get_handle(component),
             OMX_IndexConfigCommonImageFilterParameters, &image_filter);
