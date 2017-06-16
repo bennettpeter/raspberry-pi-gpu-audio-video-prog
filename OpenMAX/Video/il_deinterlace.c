@@ -480,7 +480,7 @@ int main(int argc, char **argv)
     COMPONENT_T *decodeComponent;
     COMPONENT_T *renderComponent;
     COMPONENT_T *fxComponent;
-    int do_deinterlace = 0;
+    int do_deinterlace = 1;
 
     if (argc >= 2)
     {
@@ -488,8 +488,8 @@ int main(int argc, char **argv)
     }
     if (argc >= 3)
     {
-        if (strcmp(argv[2],"d")==0)
-            do_deinterlace = 1;
+        if (strcmp(argv[2],"n")==0)
+            do_deinterlace = 0;
     }
 
     FILE *fp = fopen(IMG, "r");

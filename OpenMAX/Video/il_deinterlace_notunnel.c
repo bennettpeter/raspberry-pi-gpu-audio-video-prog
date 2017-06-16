@@ -17,6 +17,7 @@
 // #define IMG "/opt/vc/src/hello_pi/hello_video/test.h264"
 char *IMG = "test.mpeg2video";
 
+
 #define NUM_BUF 5
 OMX_BUFFERHEADERTYPE *pDecodeHeader[NUM_BUF];
 OMX_BUFFERHEADERTYPE **ppDecodeHeader;
@@ -243,13 +244,18 @@ OMX_ERRORTYPE read_into_buffer_and_empty(FILE *fp,
 
     buff_header->nFilledLen = nread;
     *toread -= nread;
-    printf("Read %d, %d still left\n", nread, *toread);
+    printf("Read %d, %d still left.\n", 
+       nread, *toread);
 
     if (*toread <= 0)
     {
         printf("Setting EOS on input\n");
         buff_header->nFlags |= OMX_BUFFERFLAG_EOS;
     }
+    printf("Empty This buffer comp %d length %d at %p\n",
+        component,
+        buff_header->nFilledLen,buff_header->pBuffer);
+
     r = OMX_EmptyThisBuffer(ilclient_get_handle(component),
                             buff_header);
     if (r != OMX_ErrorNone)
@@ -313,8 +319,13 @@ static void setup_deinterlace(COMPONENT_T *component)
     image_filter.nNumParams = 1;
     image_filter.nParams[0] = 3;
 
-    image_filter.eImageFilter = OMX_ImageFilterDeInterlaceAdvanced;
+    // image_filter.nNumParams = 3;
+    // image_filter.nParams[0] = 1;
+    // image_filter.nParams[1] = 0;
+    // image_filter.nParams[2] = 1;
 
+    image_filter.eImageFilter = OMX_ImageFilterDeInterlaceAdvanced;
+    // image_filter.eImageFilter = OMX_ImageFilterDeInterlaceFast;
     if (err == OMX_ErrorNone)
         err = OMX_SetConfig(ilclient_get_handle(component),
             OMX_IndexConfigCommonImageFilterParameters, &image_filter);
@@ -487,7 +498,7 @@ int main(int argc, char **argv)
     COMPONENT_T *renderComponent;
     COMPONENT_T *fxComponent;
     COMPONENT_T *outComponent;
-    int do_deinterlace = 0;
+    int do_deinterlace = 1;
 
     if (argc >= 2)
     {
@@ -495,11 +506,9 @@ int main(int argc, char **argv)
     }
     if (argc >= 3)
     {
-        if (strcmp(argv[2],"d")==0)
-            do_deinterlace = 1;
+        if (strcmp(argv[2],"n")==0)
+            do_deinterlace = 0;
     }
-    //TEMP
-    do_deinterlace = 1;
 
     FILE *fp = fopen(IMG, "r");
     int toread = get_file_size(IMG);
@@ -700,7 +709,7 @@ int main(int argc, char **argv)
     if (do_deinterlace)
     {
         setup_shared_buffer_format(decodeComponent, 131, fxComponent, 190);
-        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 191);
+//NEEDED?        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 191);
         print_port_info(ilclient_get_handle(fxComponent), 190);
         print_port_info(ilclient_get_handle(fxComponent), 191);
 
@@ -872,6 +881,9 @@ int main(int argc, char **argv)
     for (i=0; i<NUM_BUF; i++)
     {
         pDecodeHeader[i]->nFilledLen = 0;
+        printf("Fill This buffer comp %d length %d at %p\n",
+            ilclient_get_handle(decodeComponent),
+            pDecodeHeader[i]->nFilledLen,pDecodeHeader[i]->pBuffer);
         error=OMX_FillThisBuffer(ilclient_get_handle(decodeComponent),
                     pDecodeHeader[i]);
         if (error != OMX_ErrorNone)
@@ -902,64 +914,22 @@ int main(int argc, char **argv)
         // print_port_info(ilclient_get_handle(renderComponent), 90);
         // print_port_info(ilclient_get_handle(decodeComponent), 131);
 
-        // If renderer is finished with a buffer give it back to 
+        // If renderer is finished with any buffers give them back to 
         // the decoder
-        buff_header =
-            ilclient_get_input_buffer(outComponent,
-                                       pOutHeader[0]->nInputPortIndex,
-                                       0 /* no block */);
-        if (buff_header)
-        {
-            printf("Got an input buffer length %d\n",
-                   buff_header->nFilledLen);
-            int found=0;
-            for (i=0;i<NUM_BUF;i++)
-            {
-                if (buff_header == pOutHeader[i])
-                {
-                    found=1;
-                    break;
-                }
-            }
-            if (!found)
-            {
-                fprintf(stderr, "Couldn't match input buffer\n");
-                exit(1);
-                
-            }
-            pDecodeHeader[i]->nFilledLen = 0;
-            error=OMX_FillThisBuffer(ilclient_get_handle(decodeComponent),
-                               pDecodeHeader[i]);
-            if (error != OMX_ErrorNone)
-            {
-                fprintf(stderr, "OMX_FillThisBuffer decoder error %s\n",
-                        err2str(error));
-                exit(2);
-            }
-
-        }
-
         while(1)
         {
-            // do we have an output buffer that has been filled?
             buff_header =
-                ilclient_get_output_buffer(decodeComponent,
-                                        131,
+                ilclient_get_input_buffer(outComponent,
+                                        pOutHeader[0]->nInputPortIndex,
                                         0 /* no block */);
-            if (!buff_header)
-                break;
-            printf("Got an output buffer length %d\n",
-                buff_header->nFilledLen);
-            if (buff_header->nFlags & OMX_BUFFERFLAG_EOS)
+            if (buff_header)
             {
-                printf("Got EOS\n");
-            }
-            if (buff_header->nFilledLen > 0)
-            {
+                printf("Got an input buffer length %d at %p\n",
+                    buff_header->nFilledLen,buff_header->pBuffer);
                 int found=0;
                 for (i=0;i<NUM_BUF;i++)
                 {
-                    if (buff_header == pDecodeHeader[i])
+                    if (buff_header == pOutHeader[i])
                     {
                         found=1;
                         break;
@@ -971,17 +941,67 @@ int main(int argc, char **argv)
                     exit(1);
                     
                 }
-                pOutHeader[i]->nFilledLen = buff_header->nFilledLen;
-                error=OMX_EmptyThisBuffer(ilclient_get_handle(outComponent),
-                                    pOutHeader[i]);
+                pDecodeHeader[i]->nFilledLen = 0;
+                printf("Fill This buffer comp %d length %d at %p\n",
+                    ilclient_get_handle(decodeComponent),
+                    pDecodeHeader[i]->nFilledLen,pDecodeHeader[i]->pBuffer);
+                error=OMX_FillThisBuffer(ilclient_get_handle(decodeComponent),
+                                pDecodeHeader[i]);
                 if (error != OMX_ErrorNone)
                 {
-                    fprintf(stderr, "OMX_EmptyThisBuffer outComponent error %s\n",
+                    fprintf(stderr, "OMX_FillThisBuffer decoder error %s\n",
                             err2str(error));
                     exit(2);
                 }
+
+            }
+            else
+                break;
+        }
+        while(1)
+        {
+            // do we have an output buffer that has been filled?
+            buff_header =
+                ilclient_get_output_buffer(decodeComponent,
+                                        131,
+                                        0 /* no block */);
+            if (!buff_header)
+                break;
+            printf("Got an output buffer length %d at %p\n",
+                buff_header->nFilledLen,buff_header->pBuffer);
+            if (buff_header->nFlags & OMX_BUFFERFLAG_EOS)
+            {
+                printf("Got EOS\n");
+            }
+            int found=0;
+            for (i=0;i<NUM_BUF;i++)
+            {
+                if (buff_header == pDecodeHeader[i])
+                {
+                    found=1;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                fprintf(stderr, "Couldn't match input buffer\n");
+                exit(1);
+                
+            }
+            pOutHeader[i]->nFilledLen = buff_header->nFilledLen;
+            printf("Empty This buffer comp %d length %d at %p\n",
+                ilclient_get_handle(outComponent),
+                pOutHeader[i]->nFilledLen,pOutHeader[i]->pBuffer);
+            error=OMX_EmptyThisBuffer(ilclient_get_handle(outComponent),
+                                pOutHeader[i]);
+            if (error != OMX_ErrorNone)
+            {
+                fprintf(stderr, "OMX_EmptyThisBuffer outComponent error %s\n",
+                        err2str(error));
+                exit(2);
             }
             usleep(50000);
+
         }
     }
 
