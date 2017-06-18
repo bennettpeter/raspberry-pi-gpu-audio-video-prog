@@ -17,6 +17,13 @@
 // #define IMG "/opt/vc/src/hello_pi/hello_video/test.h264"
 char *IMG = "test.mpeg2video";
 
+
+#define NUM_BUF 5
+OMX_BUFFERHEADERTYPE *pDecodeHeader[NUM_BUF];
+OMX_BUFFERHEADERTYPE **ppDecodeHeader;
+OMX_BUFFERHEADERTYPE *pOutHeader[NUM_BUF];
+OMX_BUFFERHEADERTYPE **ppOutHeader;
+
 void printState(OMX_HANDLETYPE handle)
 {
     OMX_STATETYPE state;
@@ -237,13 +244,18 @@ OMX_ERRORTYPE read_into_buffer_and_empty(FILE *fp,
 
     buff_header->nFilledLen = nread;
     *toread -= nread;
-    printf("Read %d, %d still left\n", nread, *toread);
+    printf("Read %d, %d still left.\n", 
+       nread, *toread);
 
     if (*toread <= 0)
     {
         printf("Setting EOS on input\n");
         buff_header->nFlags |= OMX_BUFFERFLAG_EOS;
     }
+    printf("Empty This buffer comp %d length %d at %p\n",
+        component,
+        buff_header->nFilledLen,buff_header->pBuffer);
+
     r = OMX_EmptyThisBuffer(ilclient_get_handle(component),
                             buff_header);
     if (r != OMX_ErrorNone)
@@ -307,8 +319,14 @@ static void setup_deinterlace(COMPONENT_T *component)
     image_filter.nNumParams = 1;
     image_filter.nParams[0] = 3;
 
-    image_filter.eImageFilter = OMX_ImageFilterDeInterlaceAdvanced;
+    // image_filter.nNumParams = 3;
+    // image_filter.nParams[0] = 1;
+    // image_filter.nParams[1] = 0;
+    // image_filter.nParams[2] = 1;
 
+    image_filter.eImageFilter = OMX_ImageFilterDeInterlaceAdvanced;
+    // image_filter.eImageFilter = OMX_ImageFilterDeInterlaceFast;
+    // image_filter.eImageFilter = OMX_ImageFilterDeInterlaceLineDouble;
     if (err == OMX_ErrorNone)
         err = OMX_SetConfig(ilclient_get_handle(component),
             OMX_IndexConfigCommonImageFilterParameters, &image_filter);
@@ -480,6 +498,9 @@ int main(int argc, char **argv)
     COMPONENT_T *decodeComponent;
     COMPONENT_T *renderComponent;
     COMPONENT_T *fxComponent;
+    COMPONENT_T *inComponent;
+    COMPONENT_T *outComponent;
+    int inPort;
     int do_deinterlace = 1;
 
     if (argc >= 2)
@@ -524,9 +545,26 @@ int main(int argc, char **argv)
 
     setup_decodeComponent(handle, decodeComponentName, &decodeComponent);
     setup_renderComponent(handle, renderComponentName, &renderComponent);
+    inComponent = decodeComponent;
+    inPort = 131;
+    outComponent = renderComponent;
     if (do_deinterlace)
+    {
         setup_fxComponent(handle, "image_fx", &fxComponent);
+        inComponent = fxComponent;
+        inPort = 191;
+
+    }
     // both components now in Idle state, no buffers, ports disabled
+    print_port_info(ilclient_get_handle(decodeComponent), 130);
+    print_port_info(ilclient_get_handle(decodeComponent), 131);
+    print_port_info(ilclient_get_handle(renderComponent), 90);
+    print_port_info(ilclient_get_handle(renderComponent), 91);
+    if (do_deinterlace)
+    {
+        print_port_info(ilclient_get_handle(fxComponent), 190);
+        print_port_info(ilclient_get_handle(fxComponent), 191);
+    }
 
     // input port
     ilclient_enable_port_buffers(decodeComponent, 130,
@@ -609,19 +647,22 @@ int main(int argc, char **argv)
         fprintf(stderr, "Couldn't change state to Idle\n");
         exit(1);
     }
-//Superfluous?        ilclient_disable_port(decodeComponent, 131);
-//Superfluous?        ilclient_disable_port_buffers(decodeComponent, 131,
-//Superfluous?                                      NULL, NULL, NULL);
+//    print_port_info(ilclient_get_handle(decodeComponent), 131);
+//Superfluous?    ilclient_disable_port(decodeComponent, 131);
+//    print_port_info(ilclient_get_handle(decodeComponent), 131);
+//Superfluous?    ilclient_disable_port_buffers(decodeComponent, 131,
+//                                  NULL, NULL, NULL);
     print_port_info(ilclient_get_handle(decodeComponent), 130);
     print_port_info(ilclient_get_handle(decodeComponent), 131);
 
     if (do_deinterlace)
     {
+
         // set up the tunnel between decode and fx ports
         err = OMX_SetupTunnel(ilclient_get_handle(decodeComponent),
-                            131,
-                            ilclient_get_handle(fxComponent),
-                            190);
+                                131,
+                                ilclient_get_handle(fxComponent),
+                                190);
         if (err != OMX_ErrorNone)
         {
             fprintf(stderr, "Error setting up tunnel 1 %X\n", err);
@@ -631,65 +672,214 @@ int main(int argc, char **argv)
         {
             printf("Tunnel 1 set up ok\n");
         }
+    }
+    print_port_info(ilclient_get_handle(fxComponent), 190);
+    print_port_info(ilclient_get_handle(fxComponent), 191);
+        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 190);
+        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 191);
+        setup_shared_buffer_format(decodeComponent, 131, renderComponent, 90);
 
-        // set up the tunnel between fx and render ports
-        err = OMX_SetupTunnel(ilclient_get_handle(fxComponent),
-                            191,
-                            ilclient_get_handle(renderComponent),
-                            90);
-        if (err != OMX_ErrorNone)
-        {
-            fprintf(stderr, "Error setting up tunnel 2 %X\n", err);
-            exit(1);
-        }
-        else
-        {
-            printf("Tunnel 2 set up ok\n");
-        }
-    }
-    else
+    unsigned char *pBuffer;
+    int bufferSize;
+    OMX_ERRORTYPE error;
+
+    // Get decode or deinterlace output port info
+    OMX_PARAM_PORTDEFINITIONTYPE portdef;
+    memset(&portdef, 0, sizeof(OMX_PARAM_PORTDEFINITIONTYPE));
+    portdef.nSize = sizeof(OMX_PARAM_PORTDEFINITIONTYPE);
+    portdef.nVersion.nVersion = OMX_VERSION;
+    portdef.nPortIndex = 131;
+
+    OMX_GetParameter(ilclient_get_handle(decodeComponent),
+                     OMX_IndexParamPortDefinition,
+                     &portdef);
+
+    bufferSize = portdef.nBufferSize;
+
+    portdef.nPortIndex = inPort;
+    OMX_GetParameter(ilclient_get_handle(inComponent),
+                     OMX_IndexParamPortDefinition,
+                     &portdef);
+
+    // Update number of buffers
+    portdef.nBufferCountActual = NUM_BUF;
+    OMX_SetParameter(ilclient_get_handle(inComponent),
+                     OMX_IndexParamPortDefinition,
+                     &portdef);
+
+    OMX_SendCommand(ilclient_get_handle(fxComponent), OMX_CommandPortEnable,
+        190, NULL);
+    // Enable decode or deinterlace output port
+    error = OMX_SendCommand(ilclient_get_handle(inComponent), OMX_CommandPortEnable,
+        inPort, NULL);
+    if (error != OMX_ErrorNone)
     {
-        // set up the tunnel between decode and render ports
-        err = OMX_SetupTunnel(ilclient_get_handle(decodeComponent),
-                            131,
-                            ilclient_get_handle(renderComponent),
-                            90);
-        if (err != OMX_ErrorNone)
+        fprintf(stderr, "OMX_CommandPortEnable inComponent error %s\n",
+                err2str(error));
+        exit(2);
+    }
+
+    for (i=0; i<NUM_BUF; i++)
+    {
+        pBuffer = malloc(bufferSize);
+
+        if (!pBuffer)
         {
-            fprintf(stderr, "Error setting up tunnel %X\n", err);
-        exit(1);
+            fprintf(stderr, "malloc failed\n");
+            exit(2);
         }
-        else
+
+        ppDecodeHeader = &pDecodeHeader[i];
+        printf("Allocating buffer %d size %d for port %d at %p\n",i,bufferSize,inPort,pBuffer);
+        error = OMX_UseBuffer(ilclient_get_handle(inComponent), ppDecodeHeader, 
+            inPort, NULL, bufferSize, pBuffer);
+
+        if (error != OMX_ErrorNone)
         {
-            printf("Tunnel set up ok\n");
+            fprintf(stderr, "OMX_UseBuffer port %d buff %d error %s\n",
+                    inPort, i, err2str(error));
+            exit(2);
         }
     }
+    printf("Completed alloc buffers for port %d\n", inPort);
+    print_port_info(ilclient_get_handle(inComponent), inPort);
+
+//    if (do_deinterlace)
+//    {
+//        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 190);
+//NEEDED?        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 191);
+//        print_port_info(ilclient_get_handle(fxComponent), 190);
+//        print_port_info(ilclient_get_handle(fxComponent), 191);
+
+        // set up render to use the same buffer
+
+        // Get render port info
+        memset(&portdef, 0, sizeof(OMX_PARAM_PORTDEFINITIONTYPE));
+        portdef.nSize = sizeof(OMX_PARAM_PORTDEFINITIONTYPE);
+        portdef.nVersion.nVersion = OMX_VERSION;
+        portdef.nPortIndex = 90;
+
+        OMX_GetParameter(ilclient_get_handle(renderComponent),
+                        OMX_IndexParamPortDefinition,
+                        &portdef);
+
+        // Update number of buffers
+        portdef.nBufferCountActual = NUM_BUF;
+        OMX_SetParameter(ilclient_get_handle(renderComponent),
+                        OMX_IndexParamPortDefinition,
+                        &portdef);
+
+        // Enable render input port
+        error = OMX_SendCommand(ilclient_get_handle(renderComponent), OMX_CommandPortEnable,
+            90, NULL);
+        if (error != OMX_ErrorNone)
+        {
+            fprintf(stderr, "OMX_CommandPortEnable fx 90 error %s\n",
+                    err2str(error));
+            exit(2);
+        }
+        
+        print_port_info(ilclient_get_handle(renderComponent), 90);
+        printState(ilclient_get_handle(renderComponent));
+        for (i=0; i<NUM_BUF; i++)
+        {
+            ppOutHeader = &pOutHeader[i];
+            pBuffer = (unsigned char *) pDecodeHeader[i]->pBuffer;
+            printf("Allocating buffer %d for port 90 at %p\n",i,pBuffer);
+            error = OMX_UseBuffer(ilclient_get_handle(renderComponent), ppOutHeader, 
+                90, NULL, bufferSize, pBuffer);
+
+            if (error != OMX_ErrorNone)
+            {
+                fprintf(stderr, "OMX_UseBuffer port 90 error %s\n",
+                        err2str(error));
+                exit(2);
+            }
+        }
+        printf("Completed alloc buffers for port 90\n");
+        print_port_info(ilclient_get_handle(renderComponent), 90);
+
+
+    // if (do_deinterlace)
+    // {
+
+    //     // set up the tunnel between decode and fx ports
+    //     err = OMX_SetupTunnel(ilclient_get_handle(decodeComponent),
+    //                             131,
+    //                             ilclient_get_handle(fxComponent),
+    //                             190);
+    //     if (err != OMX_ErrorNone)
+    //     {
+    //         fprintf(stderr, "Error setting up tunnel 1 %X\n", err);
+    //         exit(1);
+    //     }
+    //     else
+    //     {
+    //         printf("Tunnel 1 set up ok\n");
+    //     }
+    // }
+    //     // set up the tunnel between fx and render ports
+    //     err = OMX_SetupTunnel(ilclient_get_handle(fxComponent),
+    //                             191,
+    //                             ilclient_get_handle(renderComponent),
+    //                             90);
+    //     if (err != OMX_ErrorNone)
+    //     {
+    //         fprintf(stderr, "Error setting up tunnel 2 %X\n", err);
+    //         exit(1);
+    //     }
+    //     else
+    //     {
+    //         printf("Tunnel 2 set up ok\n");
+    //     }
+    // }
+    // else
+    // {
+    //     // set up the tunnel between decode and render ports
+    //     err = OMX_SetupTunnel(ilclient_get_handle(decodeComponent),
+    //                             131,
+    //                             ilclient_get_handle(renderComponent),
+    //                             90);
+    //     if (err != OMX_ErrorNone)
+    //     {
+    //         fprintf(stderr, "Error setting up tunnel %X\n", err);
+    //         exit(1);
+    //     }
+    //     else
+    //     {
+    //         printf("Tunnel set up ok\n");
+    //     }
+    // }
     // Okay to go back to processing data
     // enable the decode output ports
 
 //UNNECESSARY?? PGB    OMX_SendCommand(ilclient_get_handle(decodeComponent),
 //UNNECESSARY?? PGB                    OMX_CommandPortEnable, 131, NULL);
 
-    print_port_info(ilclient_get_handle(decodeComponent), 131);
     ilclient_enable_port(decodeComponent, 131);
+    print_port_info(ilclient_get_handle(decodeComponent), 131);
 
     if (do_deinterlace)
     {
         printState(ilclient_get_handle(fxComponent));
-        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 191);
         print_port_info(ilclient_get_handle(fxComponent), 190);
         print_port_info(ilclient_get_handle(fxComponent), 191);
-        printState(ilclient_get_handle(fxComponent));
+//        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 190);
+//        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 191);
+//        print_port_info(ilclient_get_handle(fxComponent), 190);
+//        print_port_info(ilclient_get_handle(fxComponent), 191);
         
         // enable fx ports
+        // ERROR HERE OMX_ErrorBadParameter
         ilclient_enable_port(fxComponent, 190);
-        ilclient_enable_port(fxComponent, 191);
+//        ilclient_enable_port(fxComponent, 191);
 
 //UNNECESSARY?? PGB    OMX_SendCommand(ilclient_get_handle(renderComponent),
 //UNNECESSARY?? PGB                    OMX_CommandPortEnable, 90, NULL);
 
         // setup_shared_buffer_format(fxComponent, renderComponent);
     }
+    ilclient_enable_port(decodeComponent, 131);
     // enable the render output ports
     ilclient_enable_port(renderComponent, 90);
 
@@ -727,7 +917,36 @@ int main(int argc, char **argv)
     }
     print_port_info(ilclient_get_handle(renderComponent), 90);
 
+    printState(ilclient_get_handle(decodeComponent));
+    printState(ilclient_get_handle(fxComponent));
+    printState(ilclient_get_handle(renderComponent));
+
+    print_port_info(ilclient_get_handle(decodeComponent), 130);
+    print_port_info(ilclient_get_handle(decodeComponent), 131);
+    print_port_info(ilclient_get_handle(fxComponent), 190);
+    print_port_info(ilclient_get_handle(fxComponent), 191);
+    print_port_info(ilclient_get_handle(renderComponent), 90);
+
+
     // now work through the file
+
+    // Give the decoder or deinterlacer all the buffers
+    for (i=0; i<NUM_BUF; i++)
+    {
+        pDecodeHeader[i]->nFilledLen = 0;
+        printf("Fill This buffer comp %d length %d at %p\n",
+            ilclient_get_handle(inComponent),
+            pDecodeHeader[i]->nFilledLen,pDecodeHeader[i]->pBuffer);
+        error=OMX_FillThisBuffer(ilclient_get_handle(inComponent),
+                    pDecodeHeader[i]);
+        if (error != OMX_ErrorNone)
+        {
+            fprintf(stderr, "OMX_FillThisBuffer decoder error %s\n",
+                    err2str(error));
+            exit(2);
+        }
+    }
+    
     while (toread > 0)
     {
         OMX_ERRORTYPE r;
@@ -736,7 +955,7 @@ int main(int argc, char **argv)
         buff_header =
             ilclient_get_input_buffer(decodeComponent,
                                       130,
-                                      1 /* block */);
+                                      0 /* block */);
         if (buff_header != NULL)
         {
             read_into_buffer_and_empty(fp,
@@ -744,10 +963,99 @@ int main(int argc, char **argv)
                                        buff_header,
                                        &toread);
         }
-        usleep(50000);
         // print_port_info(ilclient_get_handle(renderComponent), 90);
-    }
+        // print_port_info(ilclient_get_handle(decodeComponent), 131);
 
+        // If renderer is finished with any buffers give them back to 
+        // the decoder
+        while(1)
+        {
+            buff_header =
+                ilclient_get_input_buffer(outComponent,
+                                        pOutHeader[0]->nInputPortIndex,
+                                        0 /* no block */);
+            if (buff_header)
+            {
+                printf("Got an input buffer length %d at %p\n",
+                    buff_header->nFilledLen,buff_header->pBuffer);
+                int found=0;
+                for (i=0;i<NUM_BUF;i++)
+                {
+                    if (buff_header == pOutHeader[i])
+                    {
+                        found=1;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    fprintf(stderr, "Couldn't match input buffer\n");
+                    exit(1);
+                    
+                }
+                pDecodeHeader[i]->nFilledLen = 0;
+                printf("Fill This buffer comp %d length %d at %p\n",
+                    ilclient_get_handle(inComponent),
+                    pDecodeHeader[i]->nFilledLen,pDecodeHeader[i]->pBuffer);
+                error=OMX_FillThisBuffer(ilclient_get_handle(inComponent),
+                                pDecodeHeader[i]);
+                if (error != OMX_ErrorNone)
+                {
+                    fprintf(stderr, "OMX_FillThisBuffer decoder error %s\n",
+                            err2str(error));
+                    exit(2);
+                }
+
+            }
+            else
+                break;
+        }
+        while(1)
+        {
+            // do we have an output buffer that has been filled?
+            buff_header =
+                ilclient_get_output_buffer(inComponent,
+                                        inPort,
+                                        0 /* no block */);
+            if (!buff_header)
+                break;
+            printf("Got an output buffer length %d at %p\n",
+                buff_header->nFilledLen,buff_header->pBuffer);
+            if (buff_header->nFlags & OMX_BUFFERFLAG_EOS)
+            {
+                printf("Got EOS\n");
+            }
+            int found=0;
+            for (i=0;i<NUM_BUF;i++)
+            {
+                if (buff_header == pDecodeHeader[i])
+                {
+                    found=1;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                fprintf(stderr, "Couldn't match input buffer\n");
+                exit(1);
+                
+            }
+            pOutHeader[i]->nFilledLen = buff_header->nFilledLen;
+            printf("Empty This buffer comp %d length %d at %p\n",
+                ilclient_get_handle(outComponent),
+                pOutHeader[i]->nFilledLen,pOutHeader[i]->pBuffer);
+            error=OMX_EmptyThisBuffer(ilclient_get_handle(outComponent),
+                                pOutHeader[i]);
+            if (error != OMX_ErrorNone)
+            {
+                fprintf(stderr, "OMX_EmptyThisBuffer outComponent error %s\n",
+                        err2str(error));
+                exit(2);
+            }
+            usleep(50000);
+
+        }
+    }
 
     ilclient_wait_for_event(renderComponent,
                             OMX_EventBufferFlag,

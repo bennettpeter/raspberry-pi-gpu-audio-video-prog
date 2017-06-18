@@ -693,7 +693,7 @@ int main(int argc, char **argv)
         }
 
         ppDecodeHeader = &pDecodeHeader[i];
-        printf("Allocating buffer %d for port 131 at %p\n",i,pBuffer);
+        printf("Allocating buffer %d size %d for port %d at %p\n",i,bufferSize,131,pBuffer);
         error = OMX_UseBuffer(ilclient_get_handle(decodeComponent), ppDecodeHeader, 
             131, NULL, bufferSize, pBuffer);
 

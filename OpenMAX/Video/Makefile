@@ -11,4 +11,4 @@ OMX_LIBS = -lopenmaxil
 OMX_ILCLIENT_LIBS = -L/opt/vc/src/hello_pi/libs/ilclient -lilclient
 LDLIBS = $(DMX_LIBS) $(EGL_LIBS) $(OMX_LIBS) $(OMX_ILCLIENT_LIBS)
 
-all: il_decode_video il_render_video il_deinterlace il_deinterlace_notunnel
+all: il_decode_video il_render_video il_deint_t1t2 il_deint_t1 il_deint_t2
