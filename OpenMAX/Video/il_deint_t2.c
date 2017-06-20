@@ -991,6 +991,7 @@ int main(int argc, char **argv)
                 
             }
             pOutHeader[i]->nFilledLen = buff_header->nFilledLen;
+            pOutHeader[i]->nFlags = buff_header->nFlags;
             printf("Empty This buffer comp %d length %d at %p\n",
                 ilclient_get_handle(outComponent),
                 pOutHeader[i]->nFilledLen,pOutHeader[i]->pBuffer);
