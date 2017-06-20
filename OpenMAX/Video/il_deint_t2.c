@@ -710,7 +710,8 @@ int main(int argc, char **argv)
     if (do_deinterlace)
     {
         setup_shared_buffer_format(decodeComponent, 131, fxComponent, 190);
-//NEEDED?        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 191);
+        setup_shared_buffer_format(decodeComponent, 131, fxComponent, 191);
+        setup_shared_buffer_format(decodeComponent, 131, renderComponent, 90);
         print_port_info(ilclient_get_handle(fxComponent), 190);
         print_port_info(ilclient_get_handle(fxComponent), 191);
 
